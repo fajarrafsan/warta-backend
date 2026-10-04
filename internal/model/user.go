@@ -31,8 +31,11 @@ type User struct {
 	Role         Role
 	// EmailVerifiedAt kosong berarti email belum dibuktikan milik pengguna.
 	EmailVerifiedAt *time.Time
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	// Bio dan AvatarURL tampil di profil publik penulis.
+	Bio       string
+	AvatarURL string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // RefreshToken disimpan dalam bentuk hash. Token aslinya hanya pernah
@@ -59,4 +62,25 @@ type UserToken struct {
 	TokenHash string
 	ExpiresAt time.Time
 	UsedAt    *time.Time
+}
+
+// AuthorProfile adalah profil publik penulis beserta angka ringkasnya. Hanya
+// artikel yang sudah terbit yang dihitung.
+type AuthorProfile struct {
+	ID            int64
+	Name          string
+	Bio           string
+	AvatarURL     string
+	Role          Role
+	JoinedAt      time.Time
+	ArticleCount  int64
+	FollowerCount int64
+	ViewCount     int64
+	LikeCount     int64
+}
+
+// Public menentukan apakah profil boleh ditampilkan: penulis dan admin, atau
+// siapa pun yang pernah menerbitkan artikel.
+func (p AuthorProfile) Public() bool {
+	return p.Role.CanWrite() || p.ArticleCount > 0
 }

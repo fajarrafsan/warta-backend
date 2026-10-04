@@ -2,7 +2,7 @@
 	"info": {
 		"_postman_id": "6f1c2a10-4b7d-4f4e-9d3a-1c9b7f0d2e51",
 		"name": "Warta API",
-		"description": "Seluruh alur Warta API v1: auth, role, kategori, artikel, tag, dan komentar.\n\nUrutan request sudah disusun agar bisa dijalankan dari atas ke bawah dalam satu kali Run. Email akun dibuat unik setiap Run, jadi koleksi ini bisa dijalankan berulang kali.\n\nSesuaikan base_url, admin_email, dan admin_password dengan environment service. Jalankan dengan REQUIRE_EMAIL_VERIFICATION=false (bawaan development), karena akun baru di koleksi ini tidak memverifikasi email sebelum berkomentar.",
+		"description": "Seluruh alur Warta API v1: auth, role, kategori, artikel, tag, komentar, profil penulis, revisi, dan pencarian.\n\nUrutan request sudah disusun agar bisa dijalankan dari atas ke bawah dalam satu kali Run. Email akun dibuat unik setiap Run, jadi koleksi ini bisa dijalankan berulang kali.\n\nSesuaikan base_url, admin_email, dan admin_password dengan environment service. Jalankan dengan REQUIRE_EMAIL_VERIFICATION=false (bawaan development), karena akun baru di koleksi ini tidak memverifikasi email sebelum berkomentar.",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"variable": [
@@ -78,6 +78,11 @@
 		},
 		{
 			"key": "comment_id",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "revision_id",
 			"value": "",
 			"type": "string"
 		}
@@ -1729,6 +1734,394 @@
 								{
 									"key": "token",
 									"value": "{{admin_token}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Penulis, revisi, dan pencarian",
+			"item": [
+				{
+					"name": "Profil penulis",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('status 200', () => pm.response.to.have.status(200));",
+									"const payload = pm.response.json().data;",
+									"pm.test('menghitung artikel terbit', () => pm.expect(payload.article_count).to.be.at.least(1));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/authors/{{author_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"authors",
+								"{{author_id}}"
+							]
+						},
+						"description": "Profil publik hanya untuk author, admin, atau yang pernah menerbitkan artikel.",
+						"auth": {
+							"type": "noauth"
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Ikuti penulis",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('status 200', () => pm.response.to.have.status(200));",
+									"pm.test('mengikuti', () => pm.expect(pm.response.json().data.following).to.eql(true));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "PUT",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/authors/{{author_id}}/follow",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"authors",
+								"{{author_id}}",
+								"follow"
+							]
+						},
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{reader_token}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Artikel dari penulis yang diikuti",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('status 200', () => pm.response.to.have.status(200));",
+									"const ids = pm.response.json().data.map((a) => a.id);",
+									"pm.test('berisi artikel penulis', () => pm.expect(ids).to.include(Number(pm.collectionVariables.get('article_id'))));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/me/feed",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"me",
+								"feed"
+							]
+						},
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{reader_token}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Saran pencarian",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('status 200', () => pm.response.to.have.status(200));",
+									"const payload = pm.response.json().data;",
+									"pm.test('bentuk saran', () => ['articles', 'categories', 'tags', 'authors'].forEach((k) => pm.expect(payload[k]).to.be.an('array')));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/search/suggest?q=golang",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"search",
+								"suggest"
+							],
+							"query": [
+								{
+									"key": "q",
+									"value": "golang"
+								}
+							]
+						},
+						"auth": {
+							"type": "noauth"
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Cari dengan cuplikan",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('status 200', () => pm.response.to.have.status(200));",
+									"const items = pm.response.json().data;",
+									"pm.test('ada hasil dengan cuplikan', () => { pm.expect(items.length).to.be.at.least(1); pm.expect(items[0].snippet.toLowerCase()).to.include('migrasi'); });"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/articles?q=migrasi%20database",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"articles"
+							],
+							"query": [
+								{
+									"key": "q",
+									"value": "migrasi%20database"
+								}
+							]
+						},
+						"auth": {
+							"type": "noauth"
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Riwayat revisi",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('status 200', () => pm.response.to.have.status(200));",
+									"const revisions = pm.response.json().data;",
+									"pm.test('dibuat lalu diganti: dua revisi', () => pm.expect(revisions.length).to.be.at.least(2));",
+									"pm.collectionVariables.set('revision_id', revisions[revisions.length - 1].id);"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/articles/{{article_id}}/revisions",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"articles",
+								"{{article_id}}",
+								"revisions"
+							]
+						},
+						"description": "Revisi tercatat setiap judul, isi, kategori, tag, atau sampul berubah.",
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{author_token}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Pembaca tidak boleh melihat riwayat",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('status 403', () => pm.response.to.have.status(403));",
+									"pm.test('kode error forbidden', () => pm.expect(pm.response.json().error.code).to.eql('forbidden'));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/articles/{{article_id}}/revisions",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"articles",
+								"{{article_id}}",
+								"revisions"
+							]
+						},
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{reader_token}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Pulihkan revisi pertama",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('status 200', () => pm.response.to.have.status(200));",
+									"pm.test('status tidak berubah', () => pm.expect(pm.response.json().data.status).to.eql('published'));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/articles/{{article_id}}/revisions/{{revision_id}}/restore",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"articles",
+								"{{article_id}}",
+								"revisions",
+								"{{revision_id}}",
+								"restore"
+							]
+						},
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{author_token}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Berhenti mengikuti",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('status 200', () => pm.response.to.have.status(200));",
+									"pm.test('tidak mengikuti lagi', () => pm.expect(pm.response.json().data.following).to.eql(false));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/authors/{{author_id}}/follow",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"authors",
+								"{{author_id}}",
+								"follow"
+							]
+						},
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{reader_token}}",
 									"type": "string"
 								}
 							]

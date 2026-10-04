@@ -4,9 +4,12 @@ Backend platform artikel dan berita. Go + MySQL.
 
 - Akun dengan tiga role: `admin`, `author`, `reader`
 - Login JWT dengan refresh token yang dirotasi setiap dipakai
-- Artikel dengan status `draft`, `published`, `archived`, slug otomatis, kategori, dan tag
+- Artikel dengan status `draft`, `scheduled`, `published`, `archived`, slug otomatis, kategori, dan tag
+- Jadwal terbit otomatis dan riwayat revisi yang bisa dipulihkan
 - Isi artikel dalam Markdown, gambar sampul yang bisa diunggah, dan perkiraan waktu baca
-- Pencarian, filter, pengurutan (termasuk "populer"), dan paging dengan total data
+- Pencarian berdasarkan relevansi (FULLTEXT) dengan cuplikan dan saran saat mengetik
+- Filter, pengurutan (termasuk "populer"), dan paging dengan total data
+- Profil publik penulis, fitur ikuti, dan halaman artikel dari penulis yang diikuti
 - Komentar, suka, dan bookmark pembaca, serta hitungan dibaca per hari
 - Statistik dashboard untuk penulis dan admin
 - Dokumentasi OpenAPI dengan Swagger UI di `/docs`
@@ -24,6 +27,13 @@ bawaan untuk mencoba: `admin@warta.local` / `admin12345`. Nilai bawaan ini
 hanya untuk komputer sendiri; service mencatat peringatan di log saat
 memakainya. Untuk server sungguhan, lihat [Menjalankan di production](#menjalankan-di-production).
 
+Database awalnya kosong. Untuk langsung punya isi yang bisa dijelajahi,
+jalankan data contoh (lihat [Data contoh](#data-contoh)):
+
+```bash
+docker compose exec api warta-seed
+```
+
 Kalau mau jalan langsung dari kode dan hanya databasenya di container:
 
 ```bash
@@ -35,6 +45,21 @@ go run ./cmd/api
 Di `.env`, isi `DB_PASSWORD=root` supaya cocok dengan `docker-compose.yml`,
 isi `JWT_SECRET` (minimal 32 karakter, misalnya dari `openssl rand -base64 48`),
 dan isi `ADMIN_PASSWORD`.
+
+### Data contoh
+
+`warta-seed` (atau `go run ./cmd/seed` / `make seed`) mengisi database kosong
+dengan 4 kategori, 3 penulis lengkap dengan foto dan bio, 4 pembaca, 12
+artikel bersampul (10 terbit, 1 terjadwal, 1 draft), komentar, suka,
+simpanan, relasi ikuti, riwayat revisi, dan hitungan dibaca 30 hari terakhir
+sehingga grafik dashboard langsung terisi. Gambar sampul dan foto dibuat oleh
+program, tanpa berkas dari luar.
+
+Semua akun contoh memakai password `warta12345`, misalnya penulis
+`dimas@warta.local` dan pembaca `laras@warta.local`; daftar lengkapnya dicetak
+di akhir. Data dimasukkan lewat API yang sama dengan frontend, jadi semua
+aturan validasi tetap berlaku. Perintah ini menolak berjalan bila database
+sudah berisi artikel atau `APP_ENV=production`, dan tidak mengirim email.
 
 ## Akun dan role
 
@@ -124,6 +149,11 @@ Semua di bawah `/api/v1`. Kolom Akses: `-` publik, `login` semua role,
 | PUT | `/me/password` | login | ganti password |
 | GET | `/me/articles` | login | artikel sendiri, semua status |
 | GET | `/me/bookmarks` | login | artikel yang disimpan |
+| GET | `/me/feed` | login | artikel terbit dari penulis yang diikuti |
+| GET | `/me/following` | login | penulis yang diikuti |
+| GET | `/authors/{id}` | - | profil publik penulis |
+| PUT, DELETE | `/authors/{id}/follow` | login | ikuti, berhenti mengikuti |
+| GET | `/search/suggest?q=` | - | saran artikel, kategori, tag, dan penulis saat mengetik |
 | GET | `/stats` | author | statistik dashboard, `?days=7..90` |
 | POST | `/uploads` | author | unggah gambar sampul (multipart, field `image`) |
 | GET | `/users` | admin | daftar user, filter `q` dan `role` |
@@ -152,6 +182,9 @@ Semua di bawah `/api/v1`. Kolom Akses: `-` publik, `login` semua role,
 | PUT, DELETE | `/articles/{id}/like` | login | suka, batal suka |
 | PUT, DELETE | `/articles/{id}/bookmark` | login | simpan, batal simpan |
 | POST | `/articles/{id}/view` | - | catat artikel dibaca |
+| GET | `/articles/{id}/revisions` | penulis, admin | riwayat revisi |
+| GET | `/articles/{id}/revisions/{rev}` | penulis, admin | isi lengkap satu revisi |
+| POST | `/articles/{id}/revisions/{rev}/restore` | penulis, admin | pulihkan ke revisi itu |
 
 Di luar `/api/v1`: `GET /health`, `GET /health/ready` (ikut mengecek database),
 `GET /docs` (Swagger UI), `GET /api/v1/openapi.yaml`, `GET /uploads/{nama}`
@@ -172,11 +205,11 @@ GET /api/v1/articles?q=golang&category=teknologi&tag=backend&author=2&sort=newes
 
 | Parameter | |
 |---|---|
-| `q` | cari di judul dan isi, tidak peka huruf besar |
+| `q` | cari di judul dan isi, lihat [Pencarian](#pencarian) |
 | `category`, `tag` | slug kategori atau tag |
 | `author` | id penulis |
-| `status` | `draft`, `published`, `archived`, atau `all`. Tanpa parameter ini hanya artikel terbit yang tampil. Selain `published`, hanya admin. |
-| `sort` | `newest` (bawaan), `oldest`, `title`, `updated`, `popular` |
+| `status` | `draft`, `scheduled`, `published`, `archived`, atau `all`. Tanpa parameter ini hanya artikel terbit yang tampil. Selain `published`, hanya admin. |
+| `sort` | `newest` (bawaan), `relevance` (bawaan bila ada `q`), `oldest`, `title`, `updated`, `popular` |
 | `page`, `per_page` | paging, `per_page` dipangkas ke `MAX_PER_PAGE` |
 
 ```json
@@ -203,6 +236,23 @@ GET /api/v1/articles?q=golang&category=teknologi&tag=backend&author=2&sort=newes
 
 Daftar berisi cuplikan (`excerpt`); isi lengkap (`content`) hanya ada di detail.
 
+### Pencarian
+
+`q` memakai indeks FULLTEXT MySQL. Semua kata harus ada, kata yang belum
+lengkap ikut cocok (`golan` menemukan `golang`), dan hasilnya diurutkan
+menurut relevansi dengan kecocokan di judul berbobot tiga kali. Kata di bawah
+tiga huruf (misalnya `go`) tidak masuk indeks FULLTEXT bawaan MySQL, jadi
+dicari dengan `LIKE`. Tanda baca dan operator pencarian MySQL dari pengguna
+dibuang sebelum query dibuat.
+
+Setiap hasil membawa `snippet`: potongan isi sekitar 180 karakter di sekitar
+kata yang dicari, walau letaknya jauh dari awal artikel. Frontend menyorot
+kata yang cocok di sana.
+
+`GET /search/suggest?q=gola` memberi saran saat mengetik: sampai 5 judul
+artikel terbit, kategori, tag yang dipakai artikel terbit, dan penulis. Kata
+kunci kurang dari dua huruf menghasilkan daftar kosong.
+
 ### Menulis artikel
 
 ```bash
@@ -218,7 +268,7 @@ curl -X POST http://localhost:8080/api/v1/articles \
 - `tags` opsional, paling banyak 10, masing-masing 2 sampai 50 karakter. Tag
   dirapikan menjadi huruf kecil, yang ganda dibuang, dan yang belum ada dibuat
   otomatis.
-- `status` wajib, salah satu dari `draft`, `published`, `archived`
+- `status` wajib, salah satu dari `draft`, `scheduled` (dengan `scheduled_at`), `published`, `archived`
 - `cover_image` opsional, path hasil `POST /api/v1/uploads`
 
 `content` ditulis dalam Markdown dan disimpan apa adanya; frontend yang
@@ -226,6 +276,33 @@ merendernya. Cuplikan di daftar artikel dibersihkan dari sintaks Markdown.
 
 `PUT` mewajibkan semua field. `PATCH` hanya mengubah field yang dikirim, jadi
 menerbitkan draft cukup dengan `{"status": "published"}`.
+
+### Jadwal terbit
+
+Kirim `status: "scheduled"` dengan `scheduled_at` (waktu di masa depan, paling
+jauh setahun). Sampai waktunya tiba, artikel diperlakukan seperti draft:
+hanya terlihat oleh penulis dan admin. Setiap instance service memeriksa
+artikel yang jatuh tempo setiap 30 detik dan menerbitkannya dengan
+`published_at` sama dengan waktu terjadwal. Pemeriksaan ini aman berjalan di
+beberapa instance sekaligus; satu artikel hanya terbit sekali.
+
+### Riwayat revisi
+
+Setiap simpanan yang mengubah judul, isi, kategori, tag, atau sampul mencatat
+satu revisi beserta siapa yang menyunting. Perubahan status saja (misalnya
+menerbitkan) tidak. Riwayat dibatasi 50 revisi terbaru per artikel.
+`POST /articles/{id}/revisions/{rev}/restore` mengembalikan isinya tanpa
+mengubah status, dan pemulihan itu sendiri tercatat sebagai revisi baru,
+sehingga bisa dibatalkan.
+
+### Profil penulis dan ikuti
+
+Penulis dan admin, atau siapa pun yang pernah menerbitkan artikel, punya
+profil publik di `GET /authors/{id}` berisi nama, bio, foto, jumlah artikel
+terbit, pengikut, dibaca, dan suka. Profil pembaca biasa dibalas 404. Bio dan
+foto diatur lewat `PATCH /me` (`bio`, `avatar_url` hasil upload). Pembaca yang
+login bisa mengikuti penulis, lalu `GET /me/feed` berisi artikel terbit dari
+penulis yang diikuti. Profil penulis ikut masuk sitemap.
 
 ### Gambar sampul
 
@@ -258,7 +335,7 @@ Urutan `popular` menimbang jumlah dibaca, suka (x5), dan komentar (x3).
 ### Statistik
 
 `GET /api/v1/stats?days=30` mengembalikan total artikel per status, dibaca,
-suka, komentar, dan bookmark; aktivitas per hari (dibaca, komentar, artikel
+suka, komentar, bookmark, dan pengikut; aktivitas per hari (dibaca, komentar, artikel
 terbit) dengan hari kosong tetap diisi nol; dan lima artikel terpopuler. Admin
 melihat semua artikel ditambah jumlah akun per role, author hanya artikelnya
 sendiri. Tanggal dihitung dalam UTC.
@@ -387,6 +464,10 @@ menjalankan migrasi naik, turun, lalu naik lagi, kemudian menguji seluruh alur
 lewat HTTP. Ada juga test yang mengisi tabel `posts` versi awal lalu memastikan
 migrasi mengubahnya dengan benar. Test ini dilewati bila `TEST_DB_HOST` kosong.
 
+Fitur profil dan ikuti, jadwal terbit dan riwayat revisi, serta pencarian
+punya test sendiri di `internal/app/features_test.go`, termasuk urutan
+relevansi, cuplikan, kata pendek, dan operator yang dibuang.
+
 Bila `TEST_REDIS_URL` juga diisi, ikut berjalan test yang menyalakan dua
 instance sekaligus dengan Redis dan object storage bersama: upload lewat satu
 instance dibuka lewat instance lain, batas login dan hitungan dibaca dihitung
@@ -418,6 +499,7 @@ dalam semenit akan terkena rate limit.
 ```
 cmd/api              menyalakan service
 cmd/migrate          perintah migrasi
+cmd/seed             data contoh (artikel, gambar, dan akun)
 scripts              backup dan restore database serta gambar
 api                  spesifikasi OpenAPI (di-embed)
 migrations           berkas SQL migrasi (di-embed)
@@ -658,6 +740,5 @@ pendek.
 
 Gambar yang diunggah tapi tidak jadi dipakai artikel tidak dihapus otomatis.
 
-Pencarian memakai `LIKE`, cukup untuk ribuan artikel. Bila datanya tumbuh jauh
-lebih besar, langkah berikutnya adalah indeks FULLTEXT atau mesin pencari
-terpisah.
+Pencarian memakai indeks FULLTEXT MySQL, cukup untuk puluhan ribu artikel.
+Toleransi salah ketik dan sinonim butuh mesin pencari terpisah.

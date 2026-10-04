@@ -16,6 +16,8 @@ type ArticleRequest struct {
 	Status     string   `json:"status"`
 	// CoverImage adalah path hasil POST /api/v1/uploads. Kosong berarti tanpa sampul.
 	CoverImage string `json:"cover_image"`
+	// ScheduledAt wajib untuk status scheduled dan diabaikan untuk status lain.
+	ScheduledAt *time.Time `json:"scheduled_at"`
 }
 
 func (r *ArticleRequest) Normalize() {
@@ -45,12 +47,13 @@ func (r ArticleRequest) AsPatch() ArticlePatch {
 		tags = []string{}
 	}
 	return ArticlePatch{
-		Title:      &r.Title,
-		Content:    &r.Content,
-		CategoryID: &r.CategoryID,
-		Tags:       &tags,
-		Status:     &r.Status,
-		CoverImage: &r.CoverImage,
+		Title:       &r.Title,
+		Content:     &r.Content,
+		CategoryID:  &r.CategoryID,
+		Tags:        &tags,
+		Status:      &r.Status,
+		CoverImage:  &r.CoverImage,
+		ScheduledAt: r.ScheduledAt,
 	}
 }
 
@@ -62,6 +65,8 @@ type ArticlePatch struct {
 	Tags       *[]string `json:"tags"`
 	Status     *string   `json:"status"`
 	CoverImage *string   `json:"cover_image"`
+	// ScheduledAt nil berarti waktu terjadwal yang tersimpan tetap dipakai.
+	ScheduledAt *time.Time `json:"scheduled_at"`
 }
 
 // Apply menimpa base dengan field yang dikirim. Hasilnya request lengkap yang
@@ -84,6 +89,9 @@ func (p ArticlePatch) Apply(base ArticleRequest) ArticleRequest {
 	}
 	if p.CoverImage != nil {
 		base.CoverImage = *p.CoverImage
+	}
+	if p.ScheduledAt != nil {
+		base.ScheduledAt = p.ScheduledAt
 	}
 	return base
 }
@@ -120,8 +128,12 @@ type ArticleSummary struct {
 	ViewCount      int            `json:"view_count"`
 	ReadingMinutes int            `json:"reading_minutes"`
 	PublishedAt    *time.Time     `json:"published_at"`
+	ScheduledAt    *time.Time     `json:"scheduled_at"`
 	CreatedAt      time.Time      `json:"created_at"`
 	UpdatedAt      time.Time      `json:"updated_at"`
+	// Snippet hanya ada di hasil pencarian: potongan isi di sekitar kata
+	// yang dicari.
+	Snippet string `json:"snippet,omitempty"`
 }
 
 type ArticleResponse struct {
@@ -149,7 +161,7 @@ func NewArticleSummary(a model.Article) ArticleSummary {
 		Slug:           a.Slug,
 		Excerpt:        a.Excerpt,
 		Status:         string(a.Status),
-		Author:         AuthorResponse{ID: a.AuthorID, Name: a.AuthorName},
+		Author:         AuthorResponse{ID: a.AuthorID, Name: a.AuthorName, AvatarURL: optional(a.AuthorAvatar)},
 		Category:       CategoryRef{ID: a.CategoryID, Name: a.CategoryName, Slug: a.CategorySlug},
 		Tags:           tags,
 		CoverImage:     cover,
@@ -158,8 +170,10 @@ func NewArticleSummary(a model.Article) ArticleSummary {
 		ViewCount:      a.ViewCount,
 		ReadingMinutes: a.ReadingMinutes(),
 		PublishedAt:    a.PublishedAt,
+		ScheduledAt:    a.ScheduledAt,
 		CreatedAt:      a.CreatedAt,
 		UpdatedAt:      a.UpdatedAt,
+		Snippet:        a.Snippet,
 	}
 }
 
@@ -173,4 +187,47 @@ func NewArticleSummaries(articles []model.Article) []ArticleSummary {
 
 func NewArticleResponse(a model.Article) ArticleResponse {
 	return ArticleResponse{ArticleSummary: NewArticleSummary(a), Content: a.Content}
+}
+
+// RevisionSummary dipakai di daftar riwayat, tanpa isi lengkap.
+type RevisionSummary struct {
+	ID         int64           `json:"id"`
+	Title      string          `json:"title"`
+	Editor     *AuthorResponse `json:"editor"`
+	Characters int             `json:"characters"`
+	CreatedAt  time.Time       `json:"created_at"`
+}
+
+type RevisionResponse struct {
+	RevisionSummary
+	Content    string   `json:"content"`
+	CategoryID *int64   `json:"category_id"`
+	Tags       []string `json:"tags"`
+	CoverImage *string  `json:"cover_image"`
+}
+
+func NewRevisionSummary(r model.Revision) RevisionSummary {
+	var editor *AuthorResponse
+	if r.EditorID > 0 {
+		editor = &AuthorResponse{ID: r.EditorID, Name: r.EditorName}
+	}
+	return RevisionSummary{ID: r.ID, Title: r.Title, Editor: editor, Characters: r.Characters, CreatedAt: r.CreatedAt}
+}
+
+func NewRevisionResponse(r model.Revision) RevisionResponse {
+	var category *int64
+	if r.CategoryID > 0 {
+		category = &r.CategoryID
+	}
+	tags := r.Tags
+	if tags == nil {
+		tags = []string{}
+	}
+	return RevisionResponse{
+		RevisionSummary: NewRevisionSummary(r),
+		Content:         r.Content,
+		CategoryID:      category,
+		Tags:            tags,
+		CoverImage:      optional(r.CoverImage),
+	}
 }

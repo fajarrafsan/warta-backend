@@ -4,11 +4,13 @@ type StatsTotals struct {
 	Articles  int64 `json:"articles"`
 	Published int64 `json:"published"`
 	Draft     int64 `json:"draft"`
+	Scheduled int64 `json:"scheduled"`
 	Archived  int64 `json:"archived"`
 	Views     int64 `json:"views"`
 	Likes     int64 `json:"likes"`
 	Comments  int64 `json:"comments"`
 	Bookmarks int64 `json:"bookmarks"`
+	Followers int64 `json:"followers"`
 }
 
 type DailyStat struct {

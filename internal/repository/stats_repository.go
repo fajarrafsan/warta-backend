@@ -12,11 +12,14 @@ type Totals struct {
 	Articles  int64
 	Published int64
 	Draft     int64
+	Scheduled int64
 	Archived  int64
 	Views     int64
 	Likes     int64
 	Comments  int64
 	Bookmarks int64
+	// Followers adalah pengikut penulis; untuk admin, semua relasi ikuti.
+	Followers int64
 }
 
 type DailyActivity struct {
@@ -62,15 +65,18 @@ func (r *statsRepository) Totals(ctx context.Context, authorID int64) (Totals, e
 		SELECT COUNT(*),
 		       COALESCE(SUM(a.status = 'published'), 0),
 		       COALESCE(SUM(a.status = 'draft'), 0),
+		       COALESCE(SUM(a.status = 'scheduled'), 0),
 		       COALESCE(SUM(a.status = 'archived'), 0),
 		       COALESCE(SUM(a.view_count), 0),
 		       (SELECT COUNT(*) FROM article_likes al JOIN articles a ON a.id = al.article_id WHERE `+authorScope+`),
 		       (SELECT COUNT(*) FROM comments cm JOIN articles a ON a.id = cm.article_id WHERE cm.hidden_at IS NULL AND `+authorScope+`),
-		       (SELECT COUNT(*) FROM bookmarks b JOIN articles a ON a.id = b.article_id WHERE `+authorScope+`)
+		       (SELECT COUNT(*) FROM bookmarks b JOIN articles a ON a.id = b.article_id WHERE `+authorScope+`),
+		       (SELECT COUNT(*) FROM follows f WHERE (? = 0 OR f.author_id = ?))
 		FROM articles a
 		WHERE `+authorScope,
-		authorID, authorID, authorID, authorID, authorID, authorID, authorID, authorID,
-	).Scan(&t.Articles, &t.Published, &t.Draft, &t.Archived, &t.Views, &t.Likes, &t.Comments, &t.Bookmarks)
+		authorID, authorID, authorID, authorID, authorID, authorID, authorID, authorID, authorID, authorID,
+	).Scan(&t.Articles, &t.Published, &t.Draft, &t.Scheduled, &t.Archived, &t.Views, &t.Likes, &t.Comments,
+		&t.Bookmarks, &t.Followers)
 	return t, err
 }
 

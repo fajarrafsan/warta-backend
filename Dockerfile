@@ -11,6 +11,7 @@ COPY . .
 
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/warta-api ./cmd/api
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/warta-migrate ./cmd/migrate
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/warta-seed ./cmd/seed
 
 FROM alpine:3.22
 
@@ -21,6 +22,7 @@ WORKDIR /app
 
 COPY --from=build /out/warta-api /usr/local/bin/warta-api
 COPY --from=build /out/warta-migrate /usr/local/bin/warta-migrate
+COPY --from=build /out/warta-seed /usr/local/bin/warta-seed
 
 USER app
 # Gambar sampul yang diunggah. Pasang volume di sini supaya tidak hilang saat

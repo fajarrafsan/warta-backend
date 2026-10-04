@@ -59,6 +59,10 @@ func ValidateArticle(r dto.ArticleRequest) map[string]string {
 		}
 	}
 
+	if r.Status == string(model.StatusScheduled) && r.ScheduledAt == nil {
+		problems["scheduled_at"] = "scheduled_at wajib diisi untuk artikel terjadwal"
+	}
+
 	if r.CoverImage != "" && !coverPattern.MatchString(r.CoverImage) {
 		problems["cover_image"] = "cover_image harus berupa path hasil upload"
 	}
@@ -67,7 +71,7 @@ func ValidateArticle(r dto.ArticleRequest) map[string]string {
 	case r.Status == "":
 		problems["status"] = "status wajib diisi"
 	case !model.ArticleStatus(r.Status).Valid():
-		problems["status"] = "status harus draft, published, atau archived"
+		problems["status"] = "status harus draft, scheduled, published, atau archived"
 	}
 
 	return problems

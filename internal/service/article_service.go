@@ -31,12 +31,28 @@ type ArticleService interface {
 
 	// ListBookmarks menampilkan artikel terbit yang disimpan actor.
 	ListBookmarks(ctx context.Context, actor auth.Actor, q dto.ArticleQuery, p pagination.Params) ([]dto.ArticleSummary, pagination.Meta, error)
+	// ListFeed menampilkan artikel terbit dari penulis yang diikuti actor.
+	ListFeed(ctx context.Context, actor auth.Actor, q dto.ArticleQuery, p pagination.Params) ([]dto.ArticleSummary, pagination.Meta, error)
 	SetLike(ctx context.Context, actor auth.Actor, id int64, liked bool) (dto.Engagement, error)
 	SetBookmark(ctx context.Context, actor auth.Actor, id int64, bookmarked bool) (dto.Engagement, error)
 	// RecordView menambah hitungan dibaca. viewer mengenali pembaca (misalnya
 	// alamat IP) supaya muat ulang halaman tidak dihitung berkali-kali.
 	RecordView(ctx context.Context, actor auth.Actor, id int64, viewer string) error
+
+	// Riwayat revisi hanya untuk penulis artikel dan admin.
+	ListRevisions(ctx context.Context, actor auth.Actor, id int64) ([]dto.RevisionSummary, error)
+	GetRevision(ctx context.Context, actor auth.Actor, id, revisionID int64) (dto.RevisionResponse, error)
+	// RestoreRevision mengembalikan judul, isi, kategori, tag, dan sampul ke
+	// isi revisi itu. Statusnya tidak berubah. Pemulihan tercatat sebagai
+	// revisi baru, jadi bisa dibatalkan.
+	RestoreRevision(ctx context.Context, actor auth.Actor, id, revisionID int64) (dto.ArticleResponse, error)
+
+	// PublishDue menerbitkan artikel terjadwal yang waktunya sudah tiba.
+	PublishDue(ctx context.Context) (int64, error)
 }
+
+// maxScheduleAhead membatasi seberapa jauh artikel bisa dijadwalkan.
+const maxScheduleAhead = 365 * 24 * time.Hour
 
 // CoverChecker memastikan gambar sampul memang sudah diunggah.
 type CoverChecker interface {
@@ -129,11 +145,15 @@ func articleFilter(q dto.ArticleQuery) (repository.ArticleFilter, error) {
 		Sort:         q.Sort,
 	}
 
-	if f.Sort == "" {
+	// Pencarian diurutkan menurut relevansi bila urutan tidak dipilih.
+	switch {
+	case f.Sort == "" && q.Query != "":
+		f.Sort = repository.SortRelevance
+	case f.Sort == "":
 		f.Sort = repository.SortNewest
 	}
 	if !repository.ValidSort(f.Sort) {
-		return f, apperr.BadRequest("sort harus newest, oldest, title, atau updated")
+		return f, apperr.BadRequest("sort harus newest, oldest, title, updated, popular, atau relevance")
 	}
 
 	switch status := model.ArticleStatus(q.Status); {
@@ -141,7 +161,7 @@ func articleFilter(q dto.ArticleQuery) (repository.ArticleFilter, error) {
 	case status.Valid():
 		f.Status = status
 	default:
-		return f, apperr.BadRequest("status harus draft, published, archived, atau all")
+		return f, apperr.BadRequest("status harus draft, scheduled, published, archived, atau all")
 	}
 
 	return f, nil
@@ -182,17 +202,21 @@ func (s *articleService) Create(ctx context.Context, actor auth.Actor, req dto.A
 	if err := s.validate(ctx, req, 0, ""); err != nil {
 		return dto.ArticleResponse{}, err
 	}
-
-	article := model.Article{
-		AuthorID:   actor.ID,
-		CategoryID: req.CategoryID,
-		Title:      req.Title,
-		Content:    req.Content,
-		CoverImage: req.CoverImage,
-		Status:     model.ArticleStatus(req.Status),
+	scheduledAt, err := s.schedule(req, nil)
+	if err != nil {
+		return dto.ArticleResponse{}, err
 	}
 
-	var err error
+	article := model.Article{
+		AuthorID:    actor.ID,
+		CategoryID:  req.CategoryID,
+		Title:       req.Title,
+		Content:     req.Content,
+		CoverImage:  req.CoverImage,
+		Status:      model.ArticleStatus(req.Status),
+		ScheduledAt: scheduledAt,
+	}
+
 	if article.Slug, err = s.uniqueSlug(ctx, article.Title, 0); err != nil {
 		return dto.ArticleResponse{}, apperr.Internal(err)
 	}
@@ -201,7 +225,7 @@ func (s *articleService) Create(ctx context.Context, actor auth.Actor, req dto.A
 		article.PublishedAt = &now
 	}
 
-	if err := s.articles.Create(ctx, &article, req.Tags); err != nil {
+	if err := s.articles.Create(ctx, &article, req.Tags, actor.ID); err != nil {
 		return dto.ArticleResponse{}, writeError(err)
 	}
 
@@ -215,16 +239,21 @@ func (s *articleService) Update(ctx context.Context, actor auth.Actor, id int64,
 	}
 
 	req := patch.Apply(dto.ArticleRequest{
-		Title:      article.Title,
-		Content:    article.Content,
-		CategoryID: article.CategoryID,
-		Tags:       article.TagNames(),
-		Status:     string(article.Status),
-		CoverImage: article.CoverImage,
+		Title:       article.Title,
+		Content:     article.Content,
+		CategoryID:  article.CategoryID,
+		Tags:        article.TagNames(),
+		Status:      string(article.Status),
+		CoverImage:  article.CoverImage,
+		ScheduledAt: article.ScheduledAt,
 	})
 	req.Normalize()
 
 	if err := s.validate(ctx, req, article.CategoryID, article.CoverImage); err != nil {
+		return dto.ArticleResponse{}, err
+	}
+	scheduledAt, err := s.schedule(req, &article)
+	if err != nil {
 		return dto.ArticleResponse{}, err
 	}
 
@@ -241,6 +270,7 @@ func (s *articleService) Update(ctx context.Context, actor auth.Actor, id int64,
 	article.CategoryID = req.CategoryID
 	article.CoverImage = req.CoverImage
 	article.Status = model.ArticleStatus(req.Status)
+	article.ScheduledAt = scheduledAt
 	if article.IsPublished() && article.PublishedAt == nil {
 		now := s.now()
 		article.PublishedAt = &now
@@ -251,7 +281,7 @@ func (s *articleService) Update(ctx context.Context, actor auth.Actor, id int64,
 		tags = &req.Tags
 	}
 
-	if err := s.articles.Update(ctx, &article, tags); err != nil {
+	if err := s.articles.Update(ctx, &article, tags, actor.ID); err != nil {
 		return dto.ArticleResponse{}, writeError(err)
 	}
 
@@ -313,6 +343,32 @@ func (s *articleService) validate(ctx context.Context, req dto.ArticleRequest, k
 	return nil
 }
 
+// schedule memeriksa waktu terbit artikel terjadwal dan mengembalikan nilai
+// yang disimpan: nil untuk status selain scheduled. current adalah keadaan
+// tersimpan saat mengubah artikel; waktu yang tidak berubah tidak diperiksa
+// ulang, supaya artikel yang hampir terbit tetap bisa disunting.
+func (s *articleService) schedule(req dto.ArticleRequest, current *model.Article) (*time.Time, error) {
+	if req.Status != string(model.StatusScheduled) || req.ScheduledAt == nil {
+		return nil, nil
+	}
+
+	at := req.ScheduledAt.UTC().Truncate(time.Second)
+	unchanged := current != nil && current.Status == model.StatusScheduled &&
+		current.ScheduledAt != nil && current.ScheduledAt.Equal(at)
+	if unchanged {
+		return &at, nil
+	}
+
+	now := s.now()
+	switch {
+	case !at.After(now):
+		return nil, apperr.Validation(map[string]string{"scheduled_at": "scheduled_at harus di masa depan"})
+	case at.After(now.Add(maxScheduleAhead)):
+		return nil, apperr.Validation(map[string]string{"scheduled_at": "scheduled_at paling jauh satu tahun dari sekarang"})
+	}
+	return &at, nil
+}
+
 func (s *articleService) uniqueSlug(ctx context.Context, title string, excludeID int64) (string, error) {
 	base := slug.Make(title, "artikel", 200)
 	taken, err := s.articles.SlugsWithPrefix(ctx, base, excludeID)
@@ -338,6 +394,17 @@ func (s *articleService) ListBookmarks(ctx context.Context, actor auth.Actor, q 
 		return nil, pagination.Meta{}, err
 	}
 	filter.BookmarkedBy = actor.ID
+	filter.Status = model.StatusPublished
+
+	return s.list(ctx, filter, p)
+}
+
+func (s *articleService) ListFeed(ctx context.Context, actor auth.Actor, q dto.ArticleQuery, p pagination.Params) ([]dto.ArticleSummary, pagination.Meta, error) {
+	filter, err := articleFilter(q)
+	if err != nil {
+		return nil, pagination.Meta{}, err
+	}
+	filter.FollowedBy = actor.ID
 	filter.Status = model.StatusPublished
 
 	return s.list(ctx, filter, p)
@@ -409,4 +476,63 @@ func (s *articleService) published(ctx context.Context, actor auth.Actor, id int
 		return model.Article{}, apperr.Forbidden("hanya artikel yang sudah terbit yang bisa disukai, disimpan, dan dihitung pembacanya")
 	}
 	return article, nil
+}
+
+func (s *articleService) ListRevisions(ctx context.Context, actor auth.Actor, id int64) ([]dto.RevisionSummary, error) {
+	if _, err := s.editable(ctx, actor, id); err != nil {
+		return nil, err
+	}
+	revisions, err := s.articles.ListRevisions(ctx, id)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+
+	out := make([]dto.RevisionSummary, 0, len(revisions))
+	for _, r := range revisions {
+		out = append(out, dto.NewRevisionSummary(r))
+	}
+	return out, nil
+}
+
+func (s *articleService) GetRevision(ctx context.Context, actor auth.Actor, id, revisionID int64) (dto.RevisionResponse, error) {
+	revision, err := s.revision(ctx, actor, id, revisionID)
+	if err != nil {
+		return dto.RevisionResponse{}, err
+	}
+	return dto.NewRevisionResponse(revision), nil
+}
+
+func (s *articleService) RestoreRevision(ctx context.Context, actor auth.Actor, id, revisionID int64) (dto.ArticleResponse, error) {
+	revision, err := s.revision(ctx, actor, id, revisionID)
+	if err != nil {
+		return dto.ArticleResponse{}, err
+	}
+
+	patch := dto.ArticlePatch{
+		Title:      &revision.Title,
+		Content:    &revision.Content,
+		Tags:       &revision.Tags,
+		CoverImage: &revision.CoverImage,
+	}
+	// Kategori yang sudah dihapus tidak bisa dipulihkan; kategori sekarang
+	// dipertahankan.
+	if revision.CategoryID > 0 {
+		patch.CategoryID = &revision.CategoryID
+	}
+	return s.Update(ctx, actor, id, patch)
+}
+
+func (s *articleService) revision(ctx context.Context, actor auth.Actor, id, revisionID int64) (model.Revision, error) {
+	if _, err := s.editable(ctx, actor, id); err != nil {
+		return model.Revision{}, err
+	}
+	revision, err := s.articles.FindRevision(ctx, id, revisionID)
+	if err != nil {
+		return model.Revision{}, notFoundOr(err, "revisi tidak ditemukan")
+	}
+	return revision, nil
+}
+
+func (s *articleService) PublishDue(ctx context.Context) (int64, error) {
+	return s.articles.PublishDue(ctx, s.now())
 }

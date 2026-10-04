@@ -31,6 +31,8 @@ const maxBodyBytes = 1 << 20
 type App struct {
 	Handler http.Handler
 	Auth    service.AuthService
+	// Articles dipakai job penerbit artikel terjadwal.
+	Articles service.ArticleService
 
 	refreshTokens repository.RefreshTokenRepository
 	userTokens    repository.UserTokenRepository
@@ -144,7 +146,10 @@ func New(cfg config.Config, db *sql.DB, hasher auth.PasswordHasher, mailer mail.
 		UserTokens: userTokens,
 		Mailer:     mailer,
 		AppURL:     cfg.AppURL,
+		Uploads:    uploads,
 	})
+	articleService := service.NewArticleService(articles, categories, engagement, uploads, views)
+	authors := repository.NewAuthorRepository(db)
 	commentService := service.NewCommentService(comments, articles, service.CommentOptions{
 		HideThreshold:        cfg.CommentHideThreshold,
 		RequireVerifiedEmail: cfg.RequireEmailVerification,
@@ -158,11 +163,13 @@ func New(cfg config.Config, db *sql.DB, hasher auth.PasswordHasher, mailer mail.
 		Users:      handler.NewUserHandler(service.NewUserService(users), pages),
 		Categories: handler.NewCategoryHandler(service.NewCategoryService(categories)),
 		Tags:       handler.NewTagHandler(service.NewTagService(tags), pages),
-		Articles:   handler.NewArticleHandler(service.NewArticleService(articles, categories, engagement, uploads, views), pages),
+		Articles:   handler.NewArticleHandler(articleService, pages),
 		Comments:   handler.NewCommentHandler(commentService, pages),
 		Stats:      handler.NewStatsHandler(service.NewStatsService(repository.NewStatsRepository(db))),
 		Uploads:    handler.NewUploadHandler(uploads),
-		Feeds:      handler.NewFeedHandler(service.NewFeedService(articles, categories), cfg.AppURL),
+		Feeds:      handler.NewFeedHandler(service.NewFeedService(articles, categories, authors), cfg.AppURL),
+		Authors:    handler.NewAuthorHandler(service.NewAuthorService(authors), pages),
+		Search:     handler.NewSearchHandler(service.NewSearchService(repository.NewSearchRepository(db))),
 	}
 
 	return &App{
@@ -177,6 +184,7 @@ func New(cfg config.Config, db *sql.DB, hasher auth.PasswordHasher, mailer mail.
 			MaxUploadBytes: cfg.MaxUploadBytes + 64<<10,
 		}),
 		Auth:          authService,
+		Articles:      articleService,
 		refreshTokens: refreshTokens,
 		userTokens:    userTokens,
 		redis:         redisClient,
@@ -207,6 +215,30 @@ func (a *App) CleanupTokens(ctx context.Context, every time.Duration) {
 			} else if deleted > 0 {
 				slog.Info("token email kedaluwarsa dihapus", "jumlah", deleted)
 			}
+		}
+	}
+}
+
+// PublishScheduled menerbitkan artikel terjadwal yang waktunya tiba, sekarang
+// lalu setiap every sampai ctx selesai. Aman dijalankan di setiap instance:
+// satu artikel hanya diterbitkan sekali.
+func (a *App) PublishScheduled(ctx context.Context, every time.Duration) {
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+
+	for {
+		published, err := a.Articles.PublishDue(ctx)
+		switch {
+		case err != nil && ctx.Err() == nil:
+			slog.Error("gagal menerbitkan artikel terjadwal", "error", err)
+		case published > 0:
+			slog.Info("artikel terjadwal diterbitkan", "jumlah", published)
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
 		}
 	}
 }

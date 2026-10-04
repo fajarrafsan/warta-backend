@@ -105,7 +105,7 @@ func migrate(t *testing.T, cfg config.Config, target uint) {
 	}
 }
 
-const latestVersion = 12
+const latestVersion = 15
 
 type client struct {
 	t    *testing.T

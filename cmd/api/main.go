@@ -70,6 +70,7 @@ func run() error {
 	}
 
 	go a.CleanupTokens(ctx, time.Hour)
+	go a.PublishScheduled(ctx, 30*time.Second)
 
 	server := &http.Server{
 		Addr:              ":" + cfg.AppPort,

@@ -49,6 +49,8 @@ type AuthOptions struct {
 	Mailer     mail.Mailer
 	// AppURL adalah alamat frontend, awal tautan di email.
 	AppURL string
+	// Uploads memeriksa bahwa foto profil memang sudah diunggah.
+	Uploads CoverChecker
 }
 
 type authService struct {
@@ -57,6 +59,7 @@ type authService struct {
 	userTokens repository.UserTokenRepository
 	mailer     mail.Mailer
 	appURL     string
+	uploads    CoverChecker
 	hasher     auth.PasswordHasher
 	jwt        *auth.TokenManager
 	refreshTTL time.Duration
@@ -79,6 +82,7 @@ func NewAuthService(
 		userTokens: opt.UserTokens,
 		mailer:     opt.Mailer,
 		appURL:     opt.AppURL,
+		uploads:    opt.Uploads,
 		hasher:     hasher,
 		jwt:        jwt,
 		refreshTTL: opt.RefreshTTL,
@@ -248,13 +252,28 @@ func (s *authService) UpdateProfile(ctx context.Context, actor auth.Actor, req d
 		return dto.UserResponse{}, apperr.Validation(problems)
 	}
 
-	if _, err := s.current(ctx, actor); err != nil {
+	user, err := s.current(ctx, actor)
+	if err != nil {
 		return dto.UserResponse{}, err
 	}
-	if err := s.users.UpdateName(ctx, actor.ID, req.Name); err != nil {
-		return dto.UserResponse{}, apperr.Internal(err)
+
+	name, bio, avatar := user.Name, user.Bio, user.AvatarURL
+	if req.Name != nil {
+		name = *req.Name
+	}
+	if req.Bio != nil {
+		bio = *req.Bio
+	}
+	if req.AvatarURL != nil {
+		avatar = *req.AvatarURL
+		if avatar != "" && avatar != user.AvatarURL && (s.uploads == nil || !s.uploads.Exists(ctx, avatar)) {
+			return dto.UserResponse{}, apperr.Validation(map[string]string{"avatar_url": "foto tidak ditemukan, unggah ulang"})
+		}
 	}
 
+	if err := s.users.UpdateProfile(ctx, actor.ID, name, bio, avatar); err != nil {
+		return dto.UserResponse{}, apperr.Internal(err)
+	}
 	return s.Me(ctx, actor)
 }
 

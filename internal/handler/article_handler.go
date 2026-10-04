@@ -136,3 +136,54 @@ func (h *ArticleHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	response.NoContent(w)
 }
+
+func (h *ArticleHandler) ListFeed(w http.ResponseWriter, r *http.Request) {
+	h.list(w, r, h.service.ListFeed)
+}
+
+func (h *ArticleHandler) ListRevisions(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		response.Error(w, r, err)
+		return
+	}
+
+	revisions, err := h.service.ListRevisions(r.Context(), auth.ActorFrom(r.Context()), id)
+	if err != nil {
+		response.Error(w, r, err)
+		return
+	}
+	response.Data(w, http.StatusOK, revisions)
+}
+
+func (h *ArticleHandler) GetRevision(w http.ResponseWriter, r *http.Request) {
+	h.revision(w, r, func(ctx context.Context, actor auth.Actor, id, revision int64) (any, error) {
+		return h.service.GetRevision(ctx, actor, id, revision)
+	})
+}
+
+func (h *ArticleHandler) RestoreRevision(w http.ResponseWriter, r *http.Request) {
+	h.revision(w, r, func(ctx context.Context, actor auth.Actor, id, revision int64) (any, error) {
+		return h.service.RestoreRevision(ctx, actor, id, revision)
+	})
+}
+
+func (h *ArticleHandler) revision(w http.ResponseWriter, r *http.Request, run func(ctx context.Context, actor auth.Actor, id, revision int64) (any, error)) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		response.Error(w, r, err)
+		return
+	}
+	revision, err := pathID(r, "revision")
+	if err != nil {
+		response.Error(w, r, err)
+		return
+	}
+
+	result, err := run(r.Context(), auth.ActorFrom(r.Context()), id, revision)
+	if err != nil {
+		response.Error(w, r, err)
+		return
+	}
+	response.Data(w, http.StatusOK, result)
+}

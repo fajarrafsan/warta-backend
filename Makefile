@@ -1,4 +1,4 @@
-.PHONY: tidy run build migrate-up migrate-down migrate-version fmt fmt-check vet test test-integration check clean up down db-up db-down logs
+.PHONY: seed tidy run build migrate-up migrate-down migrate-version fmt fmt-check vet test test-integration check clean up down db-up db-down logs
 
 BINARY := bin/warta-api
 
@@ -63,3 +63,7 @@ db-down:
 
 logs:
 	docker compose logs -f api
+
+# Isi database kosong dengan data contoh (lihat README).
+seed:
+	go run ./cmd/seed

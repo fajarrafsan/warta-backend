@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 
 	"warta/internal/model"
@@ -46,7 +47,8 @@ type sitemap struct {
 }
 
 func (h *FeedHandler) Sitemap(w http.ResponseWriter, r *http.Request) {
-	articles, categories, err := h.service.Sitemap(r.Context(), sitemapSize)
+	data, err := h.service.Sitemap(r.Context(), sitemapSize)
+	articles := data.Articles
 	if err != nil {
 		response.Error(w, r, err)
 		return
@@ -58,8 +60,11 @@ func (h *FeedHandler) Sitemap(w http.ResponseWriter, r *http.Request) {
 		home.LastMod = articles[0].UpdatedAt.UTC().Format(time.DateOnly)
 	}
 	doc.URLs = append(doc.URLs, home)
-	for _, c := range categories {
+	for _, c := range data.Categories {
 		doc.URLs = append(doc.URLs, sitemapURL{Loc: h.appURL + "/kategori/" + url.PathEscape(c.Slug)})
+	}
+	for _, a := range data.Authors {
+		doc.URLs = append(doc.URLs, sitemapURL{Loc: h.appURL + "/penulis/" + strconv.FormatInt(a.ID, 10)})
 	}
 	for _, a := range articles {
 		doc.URLs = append(doc.URLs, sitemapURL{Loc: h.articleURL(a), LastMod: a.UpdatedAt.UTC().Format(time.DateOnly)})

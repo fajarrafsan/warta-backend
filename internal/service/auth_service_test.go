@@ -57,9 +57,9 @@ func (f *fakeUsers) List(context.Context, repository.UserFilter, pagination.Para
 	return nil, 0, nil
 }
 
-func (f *fakeUsers) UpdateName(_ context.Context, id int64, name string) error {
+func (f *fakeUsers) UpdateProfile(_ context.Context, id int64, name, bio, avatarURL string) error {
 	u := f.byID[id]
-	u.Name = name
+	u.Name, u.Bio, u.AvatarURL = name, bio, avatarURL
 	f.byID[id] = u
 	return nil
 }

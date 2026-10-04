@@ -1,6 +1,7 @@
 package validation
 
 import (
+	"fmt"
 	"net/mail"
 
 	"warta/internal/dto"
@@ -29,9 +30,19 @@ func ValidateLogin(r dto.LoginRequest) map[string]string {
 	return problems
 }
 
+const maxBio = 300
+
 func ValidateProfile(r dto.UpdateProfileRequest) map[string]string {
 	problems := make(map[string]string)
-	nameProblem(problems, r.Name)
+	if r.Name != nil {
+		nameProblem(problems, *r.Name)
+	}
+	if r.Bio != nil && length(*r.Bio) > maxBio {
+		problems["bio"] = fmt.Sprintf("bio maksimal %d karakter", maxBio)
+	}
+	if r.AvatarURL != nil && *r.AvatarURL != "" && !coverPattern.MatchString(*r.AvatarURL) {
+		problems["avatar_url"] = "avatar_url harus berupa path hasil upload"
+	}
 	return problems
 }
 

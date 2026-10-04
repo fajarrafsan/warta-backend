@@ -13,41 +13,52 @@ import (
 type FeedService interface {
 	// Latest adalah artikel terbit terbaru, untuk RSS.
 	Latest(ctx context.Context, limit int) ([]model.Article, error)
-	// Sitemap adalah artikel terbit yang terakhir diubah dan kategori yang
-	// punya artikel.
-	Sitemap(ctx context.Context, limit int) ([]model.Article, []model.Category, error)
+	// Sitemap adalah artikel terbit yang terakhir diubah, kategori yang
+	// punya artikel, dan penulis yang punya artikel.
+	Sitemap(ctx context.Context, limit int) (SitemapData, error)
+}
+
+type SitemapData struct {
+	Articles   []model.Article
+	Categories []model.Category
+	Authors    []model.AuthorProfile
 }
 
 type feedService struct {
 	articles   repository.ArticleRepository
 	categories repository.CategoryRepository
+	authors    repository.AuthorRepository
 }
 
-func NewFeedService(articles repository.ArticleRepository, categories repository.CategoryRepository) FeedService {
-	return &feedService{articles: articles, categories: categories}
+func NewFeedService(articles repository.ArticleRepository, categories repository.CategoryRepository, authors repository.AuthorRepository) FeedService {
+	return &feedService{articles: articles, categories: categories, authors: authors}
 }
 
 func (s *feedService) Latest(ctx context.Context, limit int) ([]model.Article, error) {
 	return s.published(ctx, repository.SortNewest, limit)
 }
 
-func (s *feedService) Sitemap(ctx context.Context, limit int) ([]model.Article, []model.Category, error) {
-	articles, err := s.published(ctx, repository.SortUpdated, limit)
-	if err != nil {
-		return nil, nil, err
+func (s *feedService) Sitemap(ctx context.Context, limit int) (SitemapData, error) {
+	var data SitemapData
+	var err error
+	if data.Articles, err = s.published(ctx, repository.SortUpdated, limit); err != nil {
+		return SitemapData{}, err
 	}
 
 	all, err := s.categories.List(ctx)
 	if err != nil {
-		return nil, nil, apperr.Internal(err)
+		return SitemapData{}, apperr.Internal(err)
 	}
-	categories := make([]model.Category, 0, len(all))
 	for _, c := range all {
 		if c.ArticleCount > 0 {
-			categories = append(categories, c)
+			data.Categories = append(data.Categories, c)
 		}
 	}
-	return articles, categories, nil
+
+	if data.Authors, err = s.authors.ListPublic(ctx, limit); err != nil {
+		return SitemapData{}, apperr.Internal(err)
+	}
+	return data, nil
 }
 
 func (s *feedService) published(ctx context.Context, sort string, limit int) ([]model.Article, error) {

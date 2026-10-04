@@ -49,9 +49,13 @@ tags:
   - name: Tag
     description: Satu artikel punya paling banyak 10 tag
   - name: Artikel
-    description: Tulisan dengan status draft, published, atau archived
+    description: Tulisan dengan status draft, scheduled, published, atau archived, beserta riwayat revisinya
   - name: Komentar
     description: Komentar pembaca pada artikel yang sudah terbit
+  - name: Penulis
+    description: Profil publik penulis, ikuti, dan artikel dari penulis yang diikuti
+  - name: Pencarian
+    description: Saran saat mengetik di kotak pencarian
   - name: Interaksi
     description: Suka, bookmark, hitungan dibaca, dan upload gambar sampul
   - name: SEO
@@ -279,7 +283,11 @@ paths:
     patch:
       operationId: updateMe
       tags: [Akun]
-      summary: Mengubah nama
+      summary: Mengubah nama, bio, atau foto profil
+      description: |
+        Hanya field yang dikirim yang diubah. Foto profil adalah path hasil
+        `POST /api/v1/uploads`; kirim string kosong untuk menghapusnya. Bio
+        dan foto tampil di profil publik penulis.
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -325,7 +333,7 @@ paths:
         - $ref: "#/components/parameters/Sort"
         - name: status
           in: query
-          schema: { type: string, enum: [draft, published, archived, all] }
+          schema: { type: string, enum: [draft, scheduled, published, archived, all] }
       responses:
         "200":
           description: OK
@@ -352,6 +360,46 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ArticleListEnvelope" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/me/feed:
+    get:
+      tags: [Penulis]
+      operationId: listMyFeed
+      summary: Artikel terbit dari penulis yang diikuti
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+        - $ref: "#/components/parameters/Search"
+        - $ref: "#/components/parameters/Sort"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ArticleListEnvelope" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/me/following:
+    get:
+      tags: [Penulis]
+      operationId: listMyFollowing
+      summary: Penulis yang diikuti, terbaru diikuti dulu
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/AuthorProfile" }
+                  meta: { $ref: "#/components/schemas/PaginationMeta" }
         "401": { $ref: "#/components/responses/Unauthorized" }
   /api/v1/stats:
     get:
@@ -482,6 +530,87 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
 
+  /api/v1/authors/{id}:
+    get:
+      tags: [Penulis]
+      operationId: getAuthor
+      summary: Profil publik penulis
+      description: |
+        Tersedia untuk author dan admin, atau siapa pun yang pernah menerbitkan
+        artikel. Profil pembaca biasa dibalas 404. Daftar artikelnya ada di
+        `GET /api/v1/articles?author={id}`.
+      security: [{}, { bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/AuthorProfile" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/authors/{id}/follow:
+    put:
+      tags: [Penulis]
+      operationId: followAuthor
+      summary: Mengikuti penulis (idempoten)
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/FollowState" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Penulis]
+      operationId: unfollowAuthor
+      summary: Berhenti mengikuti penulis (idempoten)
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/FollowState" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/search/suggest:
+    get:
+      tags: [Pencarian]
+      operationId: searchSuggest
+      summary: Saran saat mengetik
+      description: |
+        Judul artikel terbit (paling banyak 5), kategori, tag yang dipakai
+        artikel terbit, dan penulis. Kata kunci kurang dari dua huruf
+        menghasilkan daftar kosong. Boleh di-cache 60 detik.
+      security: [{}]
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/Suggestions" }
   /api/v1/categories:
     get:
       operationId: listCategories
@@ -671,7 +800,7 @@ paths:
           schema: { type: integer, format: int64 }
         - name: status
           in: query
-          schema: { type: string, enum: [draft, published, archived, all] }
+          schema: { type: string, enum: [draft, scheduled, published, archived, all] }
         - $ref: "#/components/parameters/Sort"
       responses:
         "200":
@@ -872,6 +1001,74 @@ paths:
         "204": { description: Tercatat atau diabaikan sebagai hitungan ganda }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/articles/{id}/revisions:
+    get:
+      tags: [Artikel]
+      operationId: listRevisions
+      summary: Riwayat revisi, terbaru dulu (penulis artikel dan admin)
+      description: |
+        Revisi baru tercatat setiap kali judul, isi, kategori, tag, atau sampul
+        berubah; perubahan status saja tidak. Paling banyak 50 revisi terbaru
+        disimpan per artikel.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/RevisionSummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/articles/{id}/revisions/{revision}:
+    get:
+      tags: [Artikel]
+      operationId: getRevision
+      summary: Isi lengkap satu revisi
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/Revision"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/Revision" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/articles/{id}/revisions/{revision}/restore:
+    post:
+      tags: [Artikel]
+      operationId: restoreRevision
+      summary: Memulihkan artikel ke isi sebuah revisi
+      description: |
+        Judul, isi, kategori, tag, dan sampul dikembalikan; status tidak
+        berubah. Pemulihan tercatat sebagai revisi baru, jadi bisa dibatalkan.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/Revision"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ArticleEnvelope" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
   /api/v1/articles/{id}/comments:
     get:
       operationId: listComments
@@ -1078,7 +1275,10 @@ components:
     Search:
       name: q
       in: query
-      description: Cari di judul dan isi, tidak peka huruf besar
+      description: |
+        Cari di judul dan isi, tidak peka huruf besar. Semua kata harus ada,
+        dan kata yang belum lengkap juga cocok ("golan" menemukan "golang").
+        Hasil membawa field snippet berisi potongan isi di sekitar kata itu.
       schema: { type: string }
     CategoryFilter:
       name: category
@@ -1093,8 +1293,16 @@ components:
     Sort:
       name: sort
       in: query
-      description: popular menimbang jumlah dibaca, suka (x5), dan komentar (x3)
-      schema: { type: string, enum: [newest, oldest, title, updated, popular], default: newest }
+      description: |
+        popular menimbang jumlah dibaca, suka (x5), dan komentar (x3).
+        relevance (bawaan bila ada `q`) mengurutkan menurut kecocokan kata
+        kunci, dengan kecocokan di judul berbobot tiga kali.
+      schema: { type: string, enum: [relevance, newest, oldest, title, updated, popular] }
+    Revision:
+      name: revision
+      in: path
+      required: true
+      schema: { type: integer, format: int64, minimum: 1 }
 
   responses:
     BadRequest:
@@ -1200,6 +1408,8 @@ components:
         email: { type: string, format: email }
         role: { $ref: "#/components/schemas/Role" }
         email_verified: { type: boolean }
+        bio: { type: string, maxLength: 300 }
+        avatar_url: { type: string, nullable: true }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     Author:
@@ -1207,6 +1417,73 @@ components:
       properties:
         id: { type: integer, format: int64 }
         name: { type: string }
+        avatar_url: { type: string, nullable: true }
+    AuthorProfile:
+      type: object
+      description: Angka hanya menghitung artikel yang sudah terbit.
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        bio: { type: string }
+        avatar_url: { type: string, nullable: true }
+        role: { $ref: "#/components/schemas/Role" }
+        joined_at: { type: string, format: date-time }
+        article_count: { type: integer }
+        follower_count: { type: integer }
+        view_count: { type: integer }
+        like_count: { type: integer }
+        following: { type: boolean, description: Selalu false bila belum login }
+    FollowState:
+      type: object
+      properties:
+        following: { type: boolean }
+        follower_count: { type: integer }
+    RevisionSummary:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        title: { type: string }
+        editor:
+          type: object
+          nullable: true
+          description: null bila akun penyunting sudah dihapus
+          properties:
+            id: { type: integer, format: int64 }
+            name: { type: string }
+        characters: { type: integer, description: Panjang isi }
+        created_at: { type: string, format: date-time }
+    Revision:
+      allOf:
+        - $ref: "#/components/schemas/RevisionSummary"
+        - type: object
+          properties:
+            content: { type: string }
+            category_id: { type: integer, format: int64, nullable: true, description: null bila kategorinya sudah dihapus }
+            tags:
+              type: array
+              items: { type: string }
+            cover_image: { type: string, nullable: true }
+    Suggestions:
+      type: object
+      properties:
+        articles:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: integer, format: int64 }
+              slug: { type: string }
+              title: { type: string }
+              category: { type: string }
+        categories:
+          type: array
+          items: { $ref: "#/components/schemas/CategoryRef" }
+        tags:
+          type: array
+          items: { $ref: "#/components/schemas/TagRef" }
+        authors:
+          type: array
+          items: { $ref: "#/components/schemas/Author" }
     TokenPair:
       type: object
       properties:
@@ -1249,7 +1526,8 @@ components:
 
     ArticleStatus:
       type: string
-      enum: [draft, published, archived]
+      description: scheduled terbit otomatis pada scheduled_at; sampai saat itu hanya terlihat oleh penulis dan admin.
+      enum: [draft, scheduled, published, archived]
     ArticleSummary:
       type: object
       properties:
@@ -1276,8 +1554,16 @@ components:
           format: date-time
           nullable: true
           description: Waktu pertama kali terbit
+        scheduled_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Waktu terbit otomatis, hanya untuk status scheduled
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        snippet:
+          type: string
+          description: Hanya di hasil pencarian (q), potongan isi di sekitar kata yang dicari
     Article:
       allOf:
         - $ref: "#/components/schemas/ArticleSummary"
@@ -1303,11 +1589,13 @@ components:
             articles: { type: integer }
             published: { type: integer }
             draft: { type: integer }
+            scheduled: { type: integer }
             archived: { type: integer }
             views: { type: integer }
             likes: { type: integer }
             comments: { type: integer }
             bookmarks: { type: integer }
+            followers: { type: integer, description: "Pengikut penulis; untuk admin, semua relasi ikuti" }
         users:
           type: object
           description: Jumlah akun per role, hanya untuk admin
@@ -1399,9 +1687,11 @@ components:
         new_password: { type: string, minLength: 8, description: Maksimal 72 byte }
     UpdateProfileRequest:
       type: object
-      required: [name]
+      description: Semua field opsional.
       properties:
         name: { type: string, minLength: 2, maxLength: 100 }
+        bio: { type: string, maxLength: 300 }
+        avatar_url: { type: string, description: "Path hasil upload, atau string kosong untuk menghapus" }
     ChangePasswordRequest:
       type: object
       required: [current_password, new_password]
@@ -1439,6 +1729,10 @@ components:
           maxItems: 10
           items: { type: string, minLength: 2, maxLength: 50 }
         status: { $ref: "#/components/schemas/ArticleStatus" }
+        scheduled_at:
+          type: string
+          format: date-time
+          description: Wajib untuk status scheduled, di masa depan dan paling jauh setahun
       example:
         title: Panduan Membangun REST API dengan Golang
         content: >-
@@ -1460,6 +1754,7 @@ components:
           items: { type: string }
         status: { $ref: "#/components/schemas/ArticleStatus" }
         cover_image: { type: string }
+        scheduled_at: { type: string, format: date-time }
     CommentRequest:
       type: object
       required: [body]

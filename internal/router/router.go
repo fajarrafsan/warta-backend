@@ -24,6 +24,8 @@ type Handlers struct {
 	Stats      *handler.StatsHandler
 	Uploads    *handler.UploadHandler
 	Feeds      *handler.FeedHandler
+	Authors    *handler.AuthorHandler
+	Search     *handler.SearchHandler
 }
 
 type Options struct {
@@ -83,6 +85,8 @@ func New(h Handlers, opt Options) http.Handler {
 	route("PUT /api/v1/me/password", h.Auth.ChangePassword, signedIn)
 	route("GET /api/v1/me/articles", h.Articles.ListMine, signedIn)
 	route("GET /api/v1/me/bookmarks", h.Articles.ListBookmarks, signedIn)
+	route("GET /api/v1/me/feed", h.Articles.ListFeed, signedIn)
+	route("GET /api/v1/me/following", h.Authors.ListFollowing, signedIn)
 	route("GET /api/v1/stats", h.Stats.Overview, signedIn, writer)
 
 	routeWithLimit(opt.MaxUploadBytes, "POST /api/v1/uploads", h.Uploads.Create, signedIn, writer, uploadLimited)
@@ -91,6 +95,12 @@ func New(h Handlers, opt Options) http.Handler {
 	route("GET /api/v1/users", h.Users.List, signedIn, admin)
 	route("GET /api/v1/users/{id}", h.Users.Get, signedIn, admin)
 	route("PATCH /api/v1/users/{id}/role", h.Users.UpdateRole, signedIn, admin)
+
+	route("GET /api/v1/authors/{id}", h.Authors.Get)
+	route("PUT /api/v1/authors/{id}/follow", h.Authors.SetFollow, signedIn)
+	route("DELETE /api/v1/authors/{id}/follow", h.Authors.SetFollow, signedIn)
+
+	route("GET /api/v1/search/suggest", h.Search.Suggest)
 
 	route("GET /api/v1/categories", h.Categories.List)
 	route("GET /api/v1/categories/{ref}", h.Categories.Get)
@@ -115,6 +125,10 @@ func New(h Handlers, opt Options) http.Handler {
 	route("PUT /api/v1/articles/{id}/bookmark", h.Articles.SetBookmark, signedIn)
 	route("DELETE /api/v1/articles/{id}/bookmark", h.Articles.SetBookmark, signedIn)
 	route("POST /api/v1/articles/{id}/view", h.Articles.RecordView)
+
+	route("GET /api/v1/articles/{id}/revisions", h.Articles.ListRevisions, signedIn)
+	route("GET /api/v1/articles/{id}/revisions/{revision}", h.Articles.GetRevision, signedIn)
+	route("POST /api/v1/articles/{id}/revisions/{revision}/restore", h.Articles.RestoreRevision, signedIn)
 
 	route("GET /api/v1/articles/{id}/comments", h.Comments.List)
 	route("POST /api/v1/articles/{id}/comments", h.Comments.Create, signedIn, commentLimited)

@@ -9,13 +9,14 @@ type ArticleStatus string
 
 const (
 	StatusDraft     ArticleStatus = "draft"
+	StatusScheduled ArticleStatus = "scheduled"
 	StatusPublished ArticleStatus = "published"
 	StatusArchived  ArticleStatus = "archived"
 )
 
 func (s ArticleStatus) Valid() bool {
 	switch s {
-	case StatusDraft, StatusPublished, StatusArchived:
+	case StatusDraft, StatusScheduled, StatusPublished, StatusArchived:
 		return true
 	}
 	return false
@@ -32,6 +33,7 @@ type Article struct {
 	Status       ArticleStatus
 	AuthorID     int64
 	AuthorName   string
+	AuthorAvatar string
 	CategoryID   int64
 	CategoryName string
 	CategorySlug string
@@ -45,8 +47,13 @@ type Article struct {
 	// ContentLength adalah panjang isi dalam karakter, dasar perkiraan waktu baca.
 	ContentLength int
 	PublishedAt   *time.Time
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	// ScheduledAt hanya terisi untuk artikel berstatus scheduled.
+	ScheduledAt *time.Time
+	// Snippet adalah potongan isi di sekitar kata yang dicari, hanya terisi
+	// di hasil pencarian.
+	Snippet   string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 func (a Article) IsPublished() bool {
@@ -87,4 +94,20 @@ func Excerpt(markdown string, n int) string {
 		}
 	}
 	return strings.TrimRight(cut, " ,.;:-") + "…"
+}
+
+// Revision adalah salinan isi artikel pada satu waktu.
+type Revision struct {
+	ID         int64
+	ArticleID  int64
+	EditorID   int64
+	EditorName string
+	Title      string
+	Content    string
+	CategoryID int64
+	Tags       []string
+	CoverImage string
+	// Characters adalah panjang isi; di daftar revisi isi lengkap tidak dimuat.
+	Characters int
+	CreatedAt  time.Time
 }

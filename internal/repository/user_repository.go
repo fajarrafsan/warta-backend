@@ -19,7 +19,7 @@ type UserRepository interface {
 	FindByID(ctx context.Context, id int64) (model.User, error)
 	FindByEmail(ctx context.Context, email string) (model.User, error)
 	List(ctx context.Context, f UserFilter, p pagination.Params) ([]model.User, int64, error)
-	UpdateName(ctx context.Context, id int64, name string) error
+	UpdateProfile(ctx context.Context, id int64, name, bio, avatarURL string) error
 	UpdatePassword(ctx context.Context, id int64, hash string) error
 	UpdateRole(ctx context.Context, id int64, role model.Role) error
 	MarkEmailVerified(ctx context.Context, id int64) error
@@ -33,12 +33,14 @@ func NewUserRepository(db *sql.DB) UserRepository {
 	return &userRepository{db: db}
 }
 
-const userColumns = "id, name, email, password_hash, role, email_verified_at, created_at, updated_at"
+const userColumns = "id, name, email, password_hash, role, email_verified_at, bio, avatar_url, created_at, updated_at"
 
 func scanUser(row interface{ Scan(...any) error }, u *model.User) error {
 	var verified sql.NullTime
-	err := row.Scan(&u.ID, &u.Name, &u.Email, &u.PasswordHash, &u.Role, &verified, &u.CreatedAt, &u.UpdatedAt)
+	var avatar sql.NullString
+	err := row.Scan(&u.ID, &u.Name, &u.Email, &u.PasswordHash, &u.Role, &verified, &u.Bio, &avatar, &u.CreatedAt, &u.UpdatedAt)
 	u.EmailVerifiedAt = nullTimePtr(verified)
+	u.AvatarURL = avatar.String
 	return err
 }
 
@@ -119,8 +121,8 @@ func (r *userRepository) List(ctx context.Context, f UserFilter, p pagination.Pa
 	return users, total, rows.Err()
 }
 
-func (r *userRepository) UpdateName(ctx context.Context, id int64, name string) error {
-	return r.update(ctx, "UPDATE users SET name = ? WHERE id = ?", name, id)
+func (r *userRepository) UpdateProfile(ctx context.Context, id int64, name, bio, avatarURL string) error {
+	return r.update(ctx, "UPDATE users SET name = ?, bio = ?, avatar_url = ? WHERE id = ?", name, bio, nullString(avatarURL), id)
 }
 
 func (r *userRepository) UpdatePassword(ctx context.Context, id int64, hash string) error {
